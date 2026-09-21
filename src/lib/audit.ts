@@ -137,11 +137,20 @@ export interface AuditSuccess {
 
 export interface AuditFailure {
   ok: false;
-  reason: 'NO_FRAME' | 'TOO_MANY_OUTLIERS';
+  reason: 'NO_FRAME' | 'TOO_MANY_OUTLIERS' | 'ZERO_DENOMINATOR';
   message: string;
   bestOutlierCount: number;
-  /** Correspondences whose image under the best transform has denominator W = 0. */
+  /** Correspondences whose image under the chosen best transform has denominator W = 0. */
   infinityCount: number;
+  /** Identifiers of the W = 0 correspondences (same order as the input rows). */
+  infinityIds: string[];
+  /**
+   * Canonical nine-integer vector of the chosen optimal transform (lexicographic
+   * winner among the minimum-outlier candidates). Absent only for NO_FRAME.
+   */
+  canonical?: bigint[];
+  /** Number of distinct canonical transforms attaining the minimum outlier count. */
+  distinctOptimal: number;
 }
 
 export type AuditResult = AuditSuccess | AuditFailure;
@@ -243,21 +252,48 @@ export function runAudit(rows: Correspondence[], maxOutliers: number): AuditResu
         '保留点中找不到四点射影标架（任意四个非共线点的组合，其第二侧对应点也须构成标架），无法唯一确定射影变换。',
       bestOutlierCount: n,
       infinityCount: 0,
+      infinityIds: [],
+      distinctOptimal: 0,
+    };
+  }
+
+  const infinityIds: string[] = [];
+  for (let t = 0; t < n; t++) {
+    if ((bestInfinityMask >> BigInt(t)) & 1n) infinityIds.push(rows[t].id);
+  }
+  const infinityCount = infinityIds.length;
+
+  // Zero denominator takes priority over the outlier allowance. A finite
+  // correspondence whose image under the chosen minimum-outlier transform has
+  // W = 0 cannot be judged at all (no finite image to compare), so spending an
+  // allowed outlier slot on it must never turn the audit into a success — even
+  // when the minimum outlier count fits within the ceiling.
+  if (infinityCount > 0) {
+    return {
+      ok: false,
+      reason: 'ZERO_DENOMINATOR',
+      message:
+        `最优射影变换（最少离群 ${bestOutliers} 个）令 ${infinityCount} 个有限对应点的齐次分母 W = 0` +
+        `（像落在无穷远，无法映射为有限像）：${infinityIds.join('、')}。` +
+        '分母为零的点不能以离群名额剔除后判为成功。',
+      bestOutlierCount: bestOutliers,
+      infinityCount,
+      infinityIds,
+      canonical: bestCanonical,
+      distinctOptimal: distinctCanonical.size,
     };
   }
 
   if (bestOutliers > maxOutliers) {
-    const infinityCount = popcount(bestInfinityMask);
-    const note =
-      infinityCount > 0
-        ? `其中 ${infinityCount} 个点经最优变换后的齐次分母 W = 0（像落在无穷远，无法与有限坐标重合）。`
-        : '';
     return {
       ok: false,
       reason: 'TOO_MANY_OUTLIERS',
-      message: `最少仍有 ${bestOutliers} 个离群点，超过允许上限 ${maxOutliers}。${note}`,
+      message: `最少仍有 ${bestOutliers} 个离群点，超过允许上限 ${maxOutliers}。`,
       bestOutlierCount: bestOutliers,
-      infinityCount,
+      infinityCount: 0,
+      infinityIds: [],
+      canonical: bestCanonical,
+      distinctOptimal: distinctCanonical.size,
     };
   }
 

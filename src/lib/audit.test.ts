@@ -16,6 +16,19 @@ const row = (id: string, a: Point, b: Point): Correspondence => ({
   by: b.y,
 });
 
+// Seven points exact under G = [[6,0,0],[0,6,0],[0,1,2]] (W = y + 2) plus E,
+// whose source (5,-2) lies on the line y = -2 and so maps to W = 0.
+const zeroDenominatorRows = (): Correspondence[] => [
+  row('F1', { x: 0, y: 0 }, { x: 0, y: 0 }),
+  row('F2', { x: 1, y: 0 }, { x: 3, y: 0 }),
+  row('F3', { x: 0, y: 1 }, { x: 0, y: 2 }),
+  row('F4', { x: 2, y: 1 }, { x: 4, y: 2 }),
+  row('X1', { x: 1, y: -3 }, { x: -6, y: 18 }),
+  row('X2', { x: 3, y: -3 }, { x: -18, y: 18 }),
+  row('X3', { x: 5, y: -1 }, { x: 30, y: -6 }),
+  row('E', { x: 5, y: -2 }, { x: 42, y: 42 }), // image has W = 0
+];
+
 describe('parser validation', () => {
   const base = (): string => {
     const pts: Point[] = [
@@ -181,49 +194,115 @@ describe('runAudit exact criteria', () => {
     expect(res.outlierIds).toEqual(['R7']);
   });
 
-  it('treats a correspondence whose image is at infinity (W = 0) as an outlier', () => {
+  it('fails with ZERO_DENOMINATOR even when the outlier allowance covers the W = 0 point', () => {
     // Frame A = standard frame; B = (0,0),(3,0),(0,2),(4,2) induces the exact
     // integer matrix G = [[6,0,0],[0,6,0],[0,1,2]], i.e. W = y + 2; the line
     // y = -2 maps to infinity. Seven correspondences are exact under it; E with
-    // source y = -2 lands on W = 0 and must be the sole outlier.
-    const rows: Correspondence[] = [
-      row('F1', { x: 0, y: 0 }, { x: 0, y: 0 }),
-      row('F2', { x: 1, y: 0 }, { x: 3, y: 0 }),
-      row('F3', { x: 0, y: 1 }, { x: 0, y: 2 }),
-      row('F4', { x: 2, y: 1 }, { x: 4, y: 2 }),
-      row('X1', { x: 1, y: -3 }, { x: -6, y: 18 }),
-      row('X2', { x: 3, y: -3 }, { x: -18, y: 18 }),
-      row('X3', { x: 5, y: -1 }, { x: 30, y: -6 }),
-      row('E', { x: 5, y: -2 }, { x: 42, y: 42 }), // image has W = 0
-    ];
+    // source y = -2 lands on W = 0. The single residual point fits the outlier
+    // ceiling of 1, but a finite correspondence with no finite image must fail
+    // as ZERO_DENOMINATOR instead of being spent as an allowed outlier.
+    const rows = zeroDenominatorRows();
     const res = runAudit(rows, 1);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.outlierCount).toBe(1);
-    expect(res.outlierIds).toEqual(['E']);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe('ZERO_DENOMINATOR');
+    expect(res.bestOutlierCount).toBe(1);
+    expect(res.infinityCount).toBe(1);
+    expect(res.infinityIds).toEqual(['E']);
+    expect(res.message).toContain('W = 0');
+    // The failure still reports the lexicographically chosen optimal transform
+    // and the tie statistics of the minimum-outlier optimization.
+    expect(res.canonical!.map(String)).toEqual([
+      '6', '0', '0', '0', '6', '0', '0', '1', '2',
+    ]);
+    expect(res.distinctOptimal).toBe(1);
   });
 
-  it('reports W = 0 (zero-denominator) correspondences when the ceiling is exceeded', () => {
-    // Same data as the test above (G = [[6,0,0],[0,6,0],[0,1,2]], seven exact
-    // points, one E whose source lies on the line y = -2 mapped to infinity).
-    // With ceiling 0 the audit must fail as TOO_MANY_OUTLIERS while reporting
-    // that the single residual correspondence has a zero denominator.
-    const rows: Correspondence[] = [
-      row('F1', { x: 0, y: 0 }, { x: 0, y: 0 }),
-      row('F2', { x: 1, y: 0 }, { x: 3, y: 0 }),
-      row('F3', { x: 0, y: 1 }, { x: 0, y: 2 }),
-      row('F4', { x: 2, y: 1 }, { x: 4, y: 2 }),
-      row('X1', { x: 1, y: -3 }, { x: -6, y: 18 }),
-      row('X2', { x: 3, y: -3 }, { x: -18, y: 18 }),
-      row('X3', { x: 5, y: -1 }, { x: 30, y: -6 }),
-      row('E', { x: 5, y: -2 }, { x: 42, y: 42 }), // image has W = 0
-    ];
+  it('gives ZERO_DENOMINATOR priority over TOO_MANY_OUTLIERS at ceiling 0', () => {
+    // Same data: with ceiling 0 both "too many outliers" and "zero denominator"
+    // apply; the zero-denominator failure must take priority.
+    const rows = zeroDenominatorRows();
     const res = runAudit(rows, 0);
     expect(res.ok).toBe(false);
     if (res.ok) return;
-    expect(res.reason).toBe('TOO_MANY_OUTLIERS');
+    expect(res.reason).toBe('ZERO_DENOMINATOR');
     expect(res.bestOutlierCount).toBe(1);
     expect(res.infinityCount).toBe(1);
-    expect(res.message).toContain('W = 0');
+    expect(res.infinityIds).toEqual(['E']);
+  });
+
+  it('still fails with plain TOO_MANY_OUTLIERS when every candidate image is finite', () => {
+    // The sample batch needs 2 outliers with no W = 0 point, so tightening the
+    // ceiling keeps the ordinary outlier failure (regression guard for the
+    // re-ordered failure branches).
+    const sample = buildSample();
+    const parsed = parseCorrespondences(sample.text).rows!;
+    const res = runAudit(parsed, 1);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe('TOO_MANY_OUTLIERS');
+    expect(res.infinityCount).toBe(0);
+    expect(res.infinityIds).toEqual([]);
+  });
+
+  it('tie with differing infinity sets: failure reports the lexicographic winner infinity set', () => {
+    // Two transforms tie at the minimum outlier count (2) but disagree on which
+    // residual point maps to infinity. The lexicographically smaller canonical
+    // matrix H' = [0,1,0,-2,3,0,-1,1,1] is selected (m[0] = 0 < identity's 1),
+    // and the zero-denominator failure must name exactly that transform's W = 0
+    // point A2 — not the loser's set — while preserving the tie count.
+    const rows: Correspondence[] = [
+      // five shared points on the common fixed line x = y
+      row('Q1', { x: 0, y: 0 }, { x: 0, y: 0 }),
+      row('Q2', { x: 1, y: 1 }, { x: 1, y: 1 }),
+      row('Q3', { x: 3, y: 3 }, { x: 3, y: 3 }),
+      row('Q4', { x: 4, y: 4 }, { x: 4, y: 4 }),
+      row('Q5', { x: 5, y: 5 }, { x: 5, y: 5 }),
+      // exact under identity; finite non-match under H'
+      row('A1', { x: 3, y: 5 }, { x: 3, y: 5 }),
+      // exact under identity; H' sends (1,0) to W = 0
+      row('A2', { x: 1, y: 0 }, { x: 1, y: 0 }),
+      // exact under H'
+      row('C1', { x: 3, y: 4 }, { x: 2, y: 3 }),
+      row('C2', { x: 5, y: 6 }, { x: 3, y: 4 }),
+    ];
+    const res = runAudit(rows, 4);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe('ZERO_DENOMINATOR');
+    expect(res.bestOutlierCount).toBe(2);
+    expect(res.canonical!.map(String)).toEqual([
+      '0', '1', '0', '-2', '3', '0', '-1', '1', '1',
+    ]);
+    expect(res.infinityIds).toEqual(['A2']);
+    expect(res.distinctOptimal).toBe(2);
+  });
+
+  it('tie with infinity only under a losing transform still succeeds with the finite winner', () => {
+    // Identity and H = [[1,0,0],[0,2,0],[0,1,1]] tie at 2 outliers. Identity is
+    // the lexicographic winner and maps every point finitely; A2 lands at W = 0
+    // only under the losing H. The audit must succeed under the selected
+    // transform — zero-denominator is a property of the chosen matrix, not a
+    // union over all tied candidates.
+    const rows: Correspondence[] = [
+      row('Q1', { x: 0, y: 0 }, { x: 0, y: 0 }),
+      row('Q2', { x: 1, y: 0 }, { x: 1, y: 0 }),
+      row('Q3', { x: 3, y: 0 }, { x: 3, y: 0 }),
+      row('Q4', { x: 4, y: 0 }, { x: 4, y: 0 }),
+      row('Q5', { x: 5, y: 0 }, { x: 5, y: 0 }),
+      row('A1', { x: 1, y: 2 }, { x: 1, y: 2 }),
+      row('A2', { x: 2, y: -1 }, { x: 2, y: -1 }), // W = 0 under H only
+      row('C1', { x: 2, y: 1 }, { x: 1, y: 1 }),
+      row('C2', { x: 4, y: 1 }, { x: 2, y: 1 }),
+    ];
+    const res = runAudit(rows, 2);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.outlierCount).toBe(2);
+    expect(res.outlierIds).toEqual(['C1', 'C2']);
+    expect(res.canonical.map(String)).toEqual([
+      '1', '0', '0', '0', '1', '0', '0', '0', '1',
+    ]);
+    expect(res.distinctOptimal).toBe(2);
   });
 });

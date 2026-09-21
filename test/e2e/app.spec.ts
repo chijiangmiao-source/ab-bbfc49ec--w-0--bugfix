@@ -103,6 +103,56 @@ test.describe('glass-plate homography audit', () => {
     await expect(page.getByTestId('input-points')).toHaveValue(collinear);
   });
 
+  test('zero denominator cannot be spent as an allowed outlier: failure, input kept, figure cleared', async ({ page }) => {
+    await page.goto('/');
+
+    // Seven points exact under G = [[6,0,0],[0,6,0],[0,1,2]] (W = y + 2) plus
+    // E whose source y = -2 maps to W = 0. With limit 1 the residual fits the
+    // outlier allowance, but the audit must fail instead of succeeding.
+    const data = [
+      'F1, 0, 0, 0, 0',
+      'F2, 1, 0, 3, 0',
+      'F3, 0, 1, 0, 2',
+      'F4, 2, 1, 4, 2',
+      'X1, 1, -3, -6, 18',
+      'X2, 3, -3, -18, 18',
+      'X3, 5, -1, 30, -6',
+      'E, 5, -2, 42, 42',
+    ].join('\n');
+    await page.getByTestId('input-points').fill(data);
+    await page.getByTestId('input-limit').fill('1');
+    await page.getByTestId('btn-run').click();
+
+    const failure = page.getByTestId('notice-failure');
+    await expect(failure).toBeVisible();
+    await expect(failure).toContainText(/分母为零/);
+    await expect(failure).toContainText(/W = 0/);
+    // The zero-denominator correspondence is named in the failure detail.
+    await expect(page.getByTestId('zero-denominator-point-E')).toHaveText('E');
+    await expect(page.getByTestId('zero-denominator-detail')).toContainText('E');
+
+    // The old success path must not appear: no success notice, no result panel
+    // (so no infinity table cell and no per-point verdict), no SVG figure.
+    await expect(page.getByTestId('notice-success')).toHaveCount(0);
+    await expect(page.getByTestId('result-panel')).toHaveCount(0);
+    await expect(page.getByText('无穷远点（w = 0）', { exact: true })).toHaveCount(0);
+    await expect(page.locator('svg')).toHaveCount(0);
+
+    // Input is preserved verbatim for correction.
+    await expect(page.getByTestId('input-points')).toHaveValue(data);
+
+    // Repair E into a genuine finite image under G: (1,-1) -> (6,-6). With
+    // ceiling 0 all eight correspondences audit successfully.
+    const repaired = data.replace('E, 5, -2, 42, 42', 'E, 1, -1, 6, -6');
+    await page.getByTestId('input-points').fill(repaired);
+    await page.getByTestId('input-limit').fill('0');
+    await page.getByTestId('btn-run').click();
+    await expect(page.getByTestId('notice-success')).toBeVisible();
+    await expect(page.getByTestId('inlier-count')).toHaveText('8');
+    await expect(page.getByTestId('outlier-count')).toHaveText('0');
+    await expect(page.getByTestId('verdict-E')).toHaveText('保留·精确重合');
+  });
+
   test('malformed input is rejected and never produces a figure', async ({ page }) => {
     await page.goto('/');
     const bad = [

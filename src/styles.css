@@ -159,6 +159,14 @@ button.primary:hover { background: #1e40af; }
 .notice.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bfe3cb; }
 
 .fail-sub { margin-top: 4px; font-size: 13px; }
+.fail-infinity {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
 
 .result-grid {
   display: grid;
