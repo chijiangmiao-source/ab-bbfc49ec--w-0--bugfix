@@ -137,7 +137,7 @@ export interface AuditSuccess {
 
 export interface AuditFailure {
   ok: false;
-  reason: 'NO_FRAME' | 'TOO_MANY_OUTLIERS';
+  reason: 'NO_FRAME' | 'TOO_MANY_OUTLIERS' | 'ZERO_DENOMINATOR';
   message: string;
   bestOutlierCount: number;
   /** Correspondences whose image under the best transform has denominator W = 0. */
@@ -256,6 +256,26 @@ export function runAudit(rows: Correspondence[], maxOutliers: number): AuditResu
       ok: false,
       reason: 'TOO_MANY_OUTLIERS',
       message: `最少仍有 ${bestOutliers} 个离群点，超过允许上限 ${maxOutliers}。${note}`,
+      bestOutlierCount: bestOutliers,
+      infinityCount,
+    };
+  }
+
+  // Zero denominators are a failure condition, not an outlier the ceiling may
+  // absorb: if the finally selected (canonical) optimal transform sends any
+  // finite correspondence to W = 0, that correspondence has no finite image at
+  // all, so the transform cannot be reported as a successful registration.
+  // This check sits between candidate optimization and the success decision;
+  // it never alters the lexicographic canonical choice or the distinct-optimal
+  // statistics gathered above.
+  const infinityCount = popcount(bestInfinityMask);
+  if (infinityCount > 0) {
+    return {
+      ok: false,
+      reason: 'ZERO_DENOMINATOR',
+      message:
+        `最终所选最优变换使 ${infinityCount} 个待核对有限对应的齐次分母 W = 0` +
+        `（像落在无穷远，无法确定有限像），离群名额不能把零分母对应转化为成功结果。`,
       bestOutlierCount: bestOutliers,
       infinityCount,
     };

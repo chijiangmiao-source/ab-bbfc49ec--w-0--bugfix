@@ -181,11 +181,13 @@ describe('runAudit exact criteria', () => {
     expect(res.outlierIds).toEqual(['R7']);
   });
 
-  it('treats a correspondence whose image is at infinity (W = 0) as an outlier', () => {
+  it('fails with ZERO_DENOMINATOR when the selected transform sends a finite correspondence to infinity', () => {
     // Frame A = standard frame; B = (0,0),(3,0),(0,2),(4,2) induces the exact
     // integer matrix G = [[6,0,0],[0,6,0],[0,1,2]], i.e. W = y + 2; the line
     // y = -2 maps to infinity. Seven correspondences are exact under it; E with
-    // source y = -2 lands on W = 0 and must be the sole outlier.
+    // source y = -2 lands on W = 0. The ceiling (1) could absorb E as the sole
+    // outlier, but a zero denominator is a failure condition: the outlier
+    // allowance must not convert it into a success.
     const rows: Correspondence[] = [
       row('F1', { x: 0, y: 0 }, { x: 0, y: 0 }),
       row('F2', { x: 1, y: 0 }, { x: 3, y: 0 }),
@@ -197,10 +199,12 @@ describe('runAudit exact criteria', () => {
       row('E', { x: 5, y: -2 }, { x: 42, y: 42 }), // image has W = 0
     ];
     const res = runAudit(rows, 1);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.outlierCount).toBe(1);
-    expect(res.outlierIds).toEqual(['E']);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toBe('ZERO_DENOMINATOR');
+    expect(res.bestOutlierCount).toBe(1);
+    expect(res.infinityCount).toBe(1);
+    expect(res.message).toContain('W = 0');
   });
 
   it('reports W = 0 (zero-denominator) correspondences when the ceiling is exceeded', () => {

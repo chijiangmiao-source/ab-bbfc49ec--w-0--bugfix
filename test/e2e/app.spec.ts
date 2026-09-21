@@ -86,6 +86,44 @@ test.describe('glass-plate homography audit', () => {
     await expect(page.getByTestId('outlier-count')).toHaveText('2');
   });
 
+  test('zero denominator: W = 0 correspondence fails the audit even within the outlier ceiling', async ({ page }) => {
+    await page.goto('/');
+    // A successful figure first, so the regression also proves it is cleared.
+    await runSampleAudit(page);
+    await expect(page.getByTestId('result-panel')).toBeVisible();
+
+    // Seven points exact under G = [[6,0,0],[0,6,0],[0,1,2]] (W = y + 2);
+    // E has source y = -2, so its homogeneous denominator is exactly zero.
+    // Ceiling 1 could absorb E as the sole outlier, but a zero denominator
+    // must fail the audit instead of becoming a success.
+    const data = [
+      'F1, 0, 0, 0, 0',
+      'F2, 1, 0, 3, 0',
+      'F3, 0, 1, 0, 2',
+      'F4, 2, 1, 4, 2',
+      'X1, 1, -3, -6, 18',
+      'X2, 3, -3, -18, 18',
+      'X3, 5, -1, 30, -6',
+      'E, 5, -2, 42, 42',
+    ].join('\n');
+    await page.getByTestId('input-points').fill(data);
+    await page.getByTestId('input-limit').fill('1');
+    await page.getByTestId('btn-run').click();
+
+    // Failure explained by the zero denominator; no success artifacts remain.
+    const failure = page.getByTestId('notice-failure');
+    await expect(failure).toBeVisible();
+    await expect(failure).toContainText('分母为零');
+    await expect(failure).toContainText('W = 0');
+    await expect(page.getByTestId('notice-success')).toHaveCount(0);
+    await expect(page.getByTestId('result-panel')).toHaveCount(0);
+    await expect(page.locator('svg')).toHaveCount(0);
+    await expect(page.getByText('无穷远点（w = 0）', { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('verdict-E')).toHaveCount(0);
+    // Input preserved verbatim.
+    await expect(page.getByTestId('input-points')).toHaveValue(data);
+  });
+
   test('no four-point frame: failure with retained input and cleared figure', async ({ page }) => {
     await page.goto('/');
     await runSampleAudit(page);

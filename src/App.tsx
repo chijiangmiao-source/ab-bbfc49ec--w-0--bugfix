@@ -6,15 +6,28 @@ import {
   parseOutlierLimit,
   runAudit,
   AuditSuccess,
+  AuditFailure,
 } from './lib/audit';
 import { applyHomography } from './lib/homography';
 import { buildSample } from './lib/sample';
 import { bigToText, ratToText } from './lib/format';
 
+const FAILURE_TITLE: Record<AuditFailure['reason'], string> = {
+  NO_FRAME: '四点标架缺失',
+  TOO_MANY_OUTLIERS: '离群数超限',
+  ZERO_DENOMINATOR: '分母为零（像落在无穷远）',
+};
+
 type View =
   | { kind: 'idle' }
   | { kind: 'input-error'; message: string }
-  | { kind: 'failed'; reason: 'NO_FRAME' | 'TOO_MANY_OUTLIERS'; message: string; bestOutlierCount: number }
+  | {
+      kind: 'failed';
+      reason: AuditFailure['reason'];
+      message: string;
+      bestOutlierCount: number;
+      infinityCount: number;
+    }
   | { kind: 'success'; result: AuditSuccess; rows: Correspondence[]; limit: number };
 
 export default function App() {
@@ -48,6 +61,7 @@ export default function App() {
           reason: result.reason,
           message: result.message,
           bestOutlierCount: result.bestOutlierCount,
+          infinityCount: result.infinityCount,
         });
       } else {
         setView({ kind: 'success', result, rows, limit });
@@ -122,12 +136,12 @@ P02, 218, 47, 39, 11
         )}
         {view.kind === 'failed' && (
           <div className="notice failure" data-testid="notice-failure" role="alert">
-            <strong>
-              审计失败：{view.reason === 'NO_FRAME' ? '四点标架缺失' : '离群数超限'}
-            </strong>{' '}
-            {view.message}
+            <strong>审计失败：{FAILURE_TITLE[view.reason]}</strong> {view.message}
             {view.reason === 'TOO_MANY_OUTLIERS' && view.bestOutlierCount < 100 && (
               <> 任何候选标架下的最少离群数为 {view.bestOutlierCount}。</>
+            )}
+            {view.reason === 'ZERO_DENOMINATOR' && (
+              <> 最优变换下有 {view.infinityCount} 个对应的齐次分母 W = 0。</>
             )}
             <div className="fail-sub">原输入已保留，旧图已清除。请核对或增补基准点后重新启动审计。</div>
           </div>
