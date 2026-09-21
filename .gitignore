@@ -1,0 +1,13 @@
+.DS_Store
+.env
+node_modules/
+__pycache__/
+
+# build / test artifacts
+dist/
+.npm-cache/
+.pw-browsers/
+test-results/
+playwright-report/
+blob-report/
+*.log

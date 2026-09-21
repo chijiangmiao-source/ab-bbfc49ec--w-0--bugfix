@@ -1,0 +1,54 @@
+# Glass-plate projective-registration audit — browser-only application.
+#
+# Publish the page:
+#   HOST_PORT=9090 docker compose up -d app
+#   open http://localhost:9090        (default port 8080)
+#
+# One-shot offline acceptance (exact-criteria unit tests + real-page Playwright
+# operations against the published container); exits 0 on pass, non-zero on fail:
+#   docker compose build verify
+#   docker compose run --rm verify
+#
+services:
+  app:
+    build:
+      context: .
+      target: web
+    image: glass-plate-audit:latest
+    # Host port is configurable; defaults to 8080.
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    restart: unless-stopped
+    networks:
+      - edge
+      - internal
+
+  # One-shot acceptance service. It is attached only to the `internal` network
+  # (which has no external gateway), so the browser truly cannot reach the
+  # internet; it drives the real page served by the app container.
+  verify:
+    build:
+      context: .
+      target: verify
+    image: glass-plate-audit-verify:latest
+    environment:
+      E2E_BASE_URL: http://app/
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - internal
+
+networks:
+  # Host-facing network for the published page.
+  edge: {}
+  # Internal-only network: containers attached to it cannot reach the internet.
+  internal:
+    internal: true
